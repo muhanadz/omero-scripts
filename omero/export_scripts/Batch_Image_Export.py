@@ -81,7 +81,8 @@ def compress(target, base):
 
 
 def save_plane(image, format, c_name, z_range, project_z, t=0, channel=None,
-               greyscale=False, zoom_percent=None, folder_name=None):
+               greyscale=False, zoom_percent=None, folder_name=None,
+               use_orig_name=False):
     """
     Renders and saves an image to disk.
 
@@ -97,6 +98,8 @@ def save_plane(image, format, c_name, z_range, project_z, t=0, channel=None,
                             greyscale
     @param zoom_percent:    Resize image by this percent if specified
     @param folder_name:     Indicate where to save the plane
+    @param use_orig_name:   If True, use the original filename instead of
+                            appending parameter info.
     """
 
     original_name = image.getName()
@@ -129,22 +132,26 @@ def save_plane(image, format, c_name, z_range, project_z, t=0, channel=None,
 
     if format == "PNG":
         img_name = make_image_name(
-            original_name, c_name, z_range, t, "png", folder_name)
+            original_name, c_name, z_range, t, "png", folder_name,
+            use_orig_name)
         log("Saving image: %s" % img_name)
         plane.save(img_name, "PNG")
     elif format == 'TIFF':
         img_name = make_image_name(
-            original_name, c_name, z_range, t, "tiff", folder_name)
+            original_name, c_name, z_range, t, "tiff", folder_name,
+            use_orig_name)
         log("Saving image: %s" % img_name)
         plane.save(img_name, 'TIFF')
     else:
         img_name = make_image_name(
-            original_name, c_name, z_range, t, "jpg", folder_name)
+            original_name, c_name, z_range, t, "jpg", folder_name,
+            use_orig_name)
         log("Saving image: %s" % img_name)
         plane.save(img_name)
 
 
-def make_image_name(original_name, c_name, z_range, t, extension, folder_name):
+def make_image_name(original_name, c_name, z_range, t, extension, folder_name,
+                    use_orig_name):
     """
     Produces the name for the saved image.
     E.g. imported/myImage.dv -> myImage_DAPI_z13_t01.png
@@ -155,7 +162,10 @@ def make_image_name(original_name, c_name, z_range, t, extension, folder_name):
         z = "%02d-%02d" % (z_range[0], z_range[1])
     else:
         z = "%02d" % z_range[0]
-    img_name = "%s_%s_z%s_t%02d.%s" % (name, c_name, z, t, extension)
+    if use_orig_name:
+        img_name = f"{name}.{extension}"
+    else:
+        img_name = "%s_%s_z%s_t%02d.%s" % (name, c_name, z, t, extension)
     if folder_name is not None:
         img_name = os.path.join(folder_name, img_name)
     # check we don't overwrite existing file
@@ -194,7 +204,8 @@ def save_as_ome_tiff(conn, image, folder_name=None):
 def save_planes_for_image(conn, image, size_c, split_cs, merged_cs,
                           channel_names=None, z_range=None, t_range=None,
                           greyscale=False, zoom_percent=None, project_z=False,
-                          format="PNG", folder_name=None):
+                          format="PNG", folder_name=None,
+                          want_orig_name=False):
     """
     Saves all the required planes for a single image, either as individual
     planes or projection.
@@ -210,6 +221,7 @@ def save_planes_for_image(conn, image, size_c, split_cs, merged_cs,
                                 greyscale
     @param zoomPercent:         Resize image by this percent if specified.
     @param projectZ:            If true, project over Z range.
+    @param want_orig_name       If true, try to use the original filename.
     """
 
     channels = []
@@ -254,18 +266,22 @@ def save_planes_for_image(conn, image, size_c, split_cs, merged_cs,
             if z_range is None:
                 default_z = image.getDefaultZ()+1
                 save_plane(image, format, c_name, (default_z,), project_z, t,
-                           c, g_scale, zoom_percent, folder_name)
+                           c, g_scale, zoom_percent, folder_name,
+                           use_orig_name=want_orig_name)
             elif project_z:
                 save_plane(image, format, c_name, z_range, project_z, t, c,
-                           g_scale, zoom_percent, folder_name)
+                           g_scale, zoom_percent, folder_name,
+                           use_orig_name=want_orig_name)
             else:
                 if len(z_range) > 1:
                     for z in range(z_range[0], z_range[1]):
                         save_plane(image, format, c_name, (z,), project_z, t,
                                    c, g_scale, zoom_percent, folder_name)
                 else:
-                    save_plane(image, format, c_name, z_range, project_z, t,
-                               c, g_scale, zoom_percent, folder_name)
+                    # Add the option of save as original filename
+                    save_plane(image, format, c_name, z_range, project_z,
+                               t, c, g_scale, zoom_percent, folder_name,
+                               use_orig_name=want_orig_name)
 
 
 def batch_image_export(conn, script_params):
@@ -281,9 +297,12 @@ def batch_image_export(conn, script_params):
     project_z = "Choose_Z_Section" in script_params and \
         script_params["Choose_Z_Section"] == 'Max projection'
 
+    # Added pramenter to export with the orginal filename
+    save_as_originalfilename = script_params["With Original Filename"]
+
     if (not split_cs) and (not merged_cs):
         log("Not chosen to save Individual Channels OR Merged Image")
-        return None, "Not chosen to save Individual Channels OR Merged Image"
+        return
 
     # check if we have these params
     channel_names = []
@@ -443,12 +462,15 @@ def batch_image_export(conn, script_params):
                 log("  %s: %d-%d"
                     % (ch.getLabel(), ch.getWindowStart(), ch.getWindowEnd()))
 
+            # Include the option of saving as original filename in the
+            # arguments in fcn save_planes_for image
             try:
-                save_planes_for_image(conn, img, size_c, split_cs, merged_cs,
-                                      channel_names, z_range, t_range,
-                                      greyscale, zoom_percent,
-                                      project_z=project_z, format=format,
-                                      folder_name=folder_name)
+                save_planes_for_image(
+                    conn, img, size_c, split_cs, merged_cs, channel_names,
+                    z_range, t_range, greyscale, zoom_percent,
+                    project_z=project_z, format=format,
+                    folder_name=folder_name,
+                    want_orig_name=save_as_originalfilename)
             finally:
                 # Make sure we close Rendering Engine
                 img._re.close()
@@ -538,6 +560,13 @@ See http://help.openmicroscopy.org/export.html#batch""",
         scripts.Bool(
             "Export_Merged_Image", grouping="4",
             description="Save merged image, using current rendering settings",
+            default=True),
+
+        # add the option that exported merged image filename stays as the
+        # original
+        scripts.Bool(
+            "With Original Filename", grouping="4.1",
+            description="Save merged image with the original filename",
             default=True),
 
         scripts.String(
