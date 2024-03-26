@@ -36,6 +36,7 @@ try:
     # Hopefully this will import
     # https://github.com/ome/omero-metadata/blob/v0.3.1/src/populate_metadata.py
     from omero_metadata.populate import ParsingContext
+    from omero_metadata.cli import MetadataControl
     OBJECT_TYPES = (
         'Plate',
         'Screen',
@@ -107,6 +108,7 @@ def populate_metadata(client, conn, script_params):
     object_ids = script_params["IDs"]
     object_id = object_ids[0]
     data_type = script_params["Data_Type"]
+    allow_nan = script_params["Allow_NaN"]
 
     if data_type == "Image":
         try:
@@ -129,7 +131,10 @@ def populate_metadata(client, conn, script_params):
         return "Please upgrade omero-py to 5.9.1 or later"
     objecti = getattr(omero.model, data_type + 'I')
     omero_object = objecti(int(object_id), False)
-    ctx = ParsingContext(client, omero_object, "")
+    header_type = MetadataControl.detect_headers(temp_name,
+                                                 keep_default_na=True)
+    ctx = ParsingContext(client, omero_object, "", column_types=header_type,
+                         allow_nan=allow_nan)
 
     try:
         if hasattr(ctx, "parse_from_handle"):
@@ -172,6 +177,10 @@ def run_script():
             "File_Annotation", grouping="3",
             description="File Annotation ID containing metadata to populate. "
             "Note this is not the same as the File ID."),
+        scripts.Bool(
+            "Allow_NaN", grouping="3",
+            description="Allow Numeric NaN values in the table.",
+            default=True),
 
         authors=["Emil Rozbicki", "OME Team"],
         institutions=["Glencoe Software Inc."],
